@@ -18,7 +18,6 @@ import tech.powerjob.server.persistence.remote.model.InstanceInfoDO;
 import tech.powerjob.server.persistence.remote.model.JobInfoDO;
 import tech.powerjob.server.persistence.remote.model.brief.BriefInstanceInfo;
 import tech.powerjob.server.persistence.remote.repository.*;
-import tech.powerjob.server.remote.transporter.ProtocolInfo;
 import tech.powerjob.server.remote.transporter.TransportService;
 
 import java.util.Collections;
@@ -32,7 +31,7 @@ import static org.mockito.Mockito.*;
 class InstanceRunningTimeoutRetryTest {
     private final InstanceInfoRepository instances = mock(InstanceInfoRepository.class);
     private final JobInfoRepository jobs = mock(JobInfoRepository.class);
-    private final AppInfoRepository apps = mock(AppInfoRepository.class);
+    private final ServerOwnershipService ownership = mock(ServerOwnershipService.class);
     private final TransportService transport = mock(TransportService.class);
     private final InstanceManager completion = mock(InstanceManager.class);
     private InstanceStatusCheckService checker;
@@ -41,14 +40,13 @@ class InstanceRunningTimeoutRetryTest {
 
     @BeforeEach
     void setUp() {
-        ProtocolInfo protocol = new ProtocolInfo();
-        protocol.setAddress("fixture-server:10010");
-        when(transport.defaultProtocol()).thenReturn(protocol);
-        when(apps.listAppIdByCurrentServer(protocol.getAddress())).thenReturn(Collections.singletonList(10L));
+        when(ownership.listOwnedAppIds()).thenReturn(Collections.singletonList(10L));
         // Real redispatch code exercises the conditional state transition, not just a mocked call.
-        DispatchService dispatch = new DispatchService(transport, null, completion, null, instances, null);
-        checker = new InstanceStatusCheckService(transport, dispatch, completion,
-                mock(WorkflowInstanceManager.class), apps, jobs, instances,
+        // Warmup disabled: it must not interfere with the running-timeout retry path.
+        DispatchService dispatch = new DispatchService(transport, null, completion, null, instances, null,
+                new BroadcastDispatchWarmupService(null, false, 20000, 2));
+        checker = new InstanceStatusCheckService(dispatch, completion,
+                mock(WorkflowInstanceManager.class), ownership, jobs, instances,
                 mock(WorkflowInfoRepository.class), mock(WorkflowInstanceInfoRepository.class));
         instance = new InstanceInfoDO();
         instance.setId(20L); instance.setAppId(10L); instance.setJobId(30L); instance.setInstanceId(40L);

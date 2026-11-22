@@ -97,6 +97,22 @@ public interface InstanceInfoRepository extends JpaRepository<InstanceInfoDO, Lo
     int updateStatusAndGmtModifiedByInstanceIdListAndOriginStatus(@Param("instanceIdList") List<Long> instanceIdList, @Param("originStatus") int originStatus, @Param("status") int status, @Param("modifyTime") Date modifyTime);
 
     /**
+     * 推迟实例的期望触发时间（广播派发预热专用，DispatchService 暂缓派发时调用）。
+     * 将 expectedTriggerTime 前移，使暂缓中的实例不会被 DISPATCH_TIMEOUT 检查反复捞起重试。
+     *
+     * @param instanceId   实例 ID
+     * @param expectTime   新的期望触发时间
+     * @param modifyTime   更新时间
+     * @param originStatus 旧状态（仅允许等待派发中的实例被推迟）
+     * @return 更新记录数量
+     */
+    @Transactional(rollbackOn = Exception.class)
+    @Modifying
+    @CanIgnoreReturnValue
+    @Query(value = "update InstanceInfoDO set expectedTriggerTime = :expectTime, gmtModified = :modifyTime where instanceId = :instanceId and status = :originStatus")
+    int updateExpectedTriggerTimeByInstanceIdAndOriginStatus(@Param("instanceId") long instanceId, @Param("expectTime") long expectTime, @Param("modifyTime") Date modifyTime, @Param("originStatus") int originStatus);
+
+    /**
      * 更新固定频率任务的执行记录
      *
      * @param instanceId   任务实例ID，分布式唯一

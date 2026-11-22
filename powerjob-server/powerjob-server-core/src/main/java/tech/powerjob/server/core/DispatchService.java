@@ -17,9 +17,11 @@ import tech.powerjob.common.request.ServerScheduleJobReq;
 import tech.powerjob.remote.framework.base.URL;
 import tech.powerjob.server.common.Holder;
 import tech.powerjob.server.common.module.WorkerInfo;
+import tech.powerjob.server.common.timewheel.holder.InstanceTimeWheelService;
 import tech.powerjob.server.core.instance.InstanceManager;
 import tech.powerjob.server.core.instance.InstanceMetadataService;
 import tech.powerjob.server.core.lock.UseCacheLock;
+import tech.powerjob.server.core.scheduler.BroadcastDispatchWarmupService;
 import tech.powerjob.server.persistence.remote.model.InstanceInfoDO;
 import tech.powerjob.server.persistence.remote.model.JobInfoDO;
 import tech.powerjob.server.persistence.remote.repository.InstanceInfoRepository;
@@ -60,6 +62,8 @@ public class DispatchService {
     private final InstanceInfoRepository instanceInfoRepository;
 
     private final TaskTrackerSelectorService taskTrackerSelectorService;
+
+    private final BroadcastDispatchWarmupService broadcastDispatchWarmupService;
 
     /**
      * 异步重新派发
@@ -145,6 +149,20 @@ public class DispatchService {
                 instanceManager.processFinishedInstance(instanceId, instanceInfo.getWfInstanceId(), FAILED, result);
                 return;
             }
+        }
+
+        // 广播任务预热：本机刚接管该应用时，Worker 心跳视图尚未积累完整，暂缓派发、不判失败，
+        // 直到候选集合稳定或预热到达上限（详见 BroadcastDispatchWarmupService）。非广播任务不进入该分支。
+        long broadcastDeferMs = broadcastDispatchWarmupService.broadcastDeferMs(jobInfo.getAppId(), jobInfo.getExecuteType());
+        if (broadcastDeferMs > 0) {
+            // 前移 expectedTriggerTime，使 DISPATCH_TIMEOUT(30s) 检查在暂缓期内不会反复捞起该实例超时重试；
+            // 暂缓不推进任何重试计数（runningTimes 不变），预热结束后由时间轮重新触发本方法，按当时已知集合派发。
+            instanceInfoRepository.updateExpectedTriggerTimeByInstanceIdAndOriginStatus(instanceId,
+                    current + broadcastDeferMs, now, WAITING_DISPATCH.getV());
+            broadcastDispatchWarmupService.onInstanceDeferred(jobInfo.getAppId(), instanceId, broadcastDeferMs);
+            InstanceTimeWheelService.schedule(instanceId, broadcastDeferMs,
+                    () -> dispatch(jobInfo, instanceId, Optional.empty(), overloadOptional));
+            return;
         }
 
         // 获取当前最合适的 worker 列表

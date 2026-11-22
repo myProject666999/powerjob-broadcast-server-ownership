@@ -22,7 +22,6 @@ import tech.powerjob.server.persistence.remote.model.WorkflowInfoDO;
 import tech.powerjob.server.persistence.remote.model.WorkflowInstanceInfoDO;
 import tech.powerjob.server.persistence.remote.model.brief.BriefInstanceInfo;
 import tech.powerjob.server.persistence.remote.repository.*;
-import tech.powerjob.server.remote.transporter.TransportService;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -48,15 +47,13 @@ public class InstanceStatusCheckService {
 
     public static final long CHECK_INTERVAL = 10000;
 
-    private final TransportService transportService;
-
     private final DispatchService dispatchService;
 
     private final InstanceManager instanceManager;
 
     private final WorkflowInstanceManager workflowInstanceManager;
 
-    private final AppInfoRepository appInfoRepository;
+    private final ServerOwnershipService serverOwnershipService;
 
     private final JobInfoRepository jobInfoRepository;
 
@@ -68,8 +65,8 @@ public class InstanceStatusCheckService {
 
     public void checkWorkflowInstance() {
         Stopwatch stopwatch = Stopwatch.createStarted();
-        // 查询 DB 获取该 Server 需要负责的 AppGroup
-        List<Long> allAppIds = appInfoRepository.listAppIdByCurrentServer(transportService.defaultProtocol().getAddress());
+        // 查询本机负责的 AppGroup（经 ServerOwnershipService 的周期级快照，四个检查共用，稳态每周期仅一次 DB 读）
+        List<Long> allAppIds = serverOwnershipService.listOwnedAppIds();
         if (CollectionUtils.isEmpty(allAppIds)) {
             log.info("[InstanceStatusChecker] current server has no app's job to check");
             return;
@@ -88,8 +85,8 @@ public class InstanceStatusCheckService {
      */
     public void checkWaitingDispatchInstance() {
         Stopwatch stopwatch = Stopwatch.createStarted();
-        // 查询 DB 获取该 Server 需要负责的 AppGroup
-        List<Long> allAppIds = appInfoRepository.listAppIdByCurrentServer(transportService.defaultProtocol().getAddress());
+        // 查询本机负责的 AppGroup（经 ServerOwnershipService 的周期级快照）
+        List<Long> allAppIds = serverOwnershipService.listOwnedAppIds();
         if (CollectionUtils.isEmpty(allAppIds)) {
             log.info("[InstanceStatusChecker] current server has no app's job to check");
             return;
@@ -109,8 +106,8 @@ public class InstanceStatusCheckService {
      */
     public void checkWaitingWorkerReceiveInstance() {
         Stopwatch stopwatch = Stopwatch.createStarted();
-        // 查询 DB 获取该 Server 需要负责的 AppGroup
-        List<Long> allAppIds = appInfoRepository.listAppIdByCurrentServer(transportService.defaultProtocol().getAddress());
+        // 查询本机负责的 AppGroup（经 ServerOwnershipService 的周期级快照）
+        List<Long> allAppIds = serverOwnershipService.listOwnedAppIds();
         if (CollectionUtils.isEmpty(allAppIds)) {
             log.info("[InstanceStatusChecker] current server has no app's job to check");
             return;
@@ -130,8 +127,8 @@ public class InstanceStatusCheckService {
      */
     public void checkRunningInstance() {
         Stopwatch stopwatch = Stopwatch.createStarted();
-        // 查询 DB 获取该 Server 需要负责的 AppGroup
-        List<Long> allAppIds = appInfoRepository.listAppIdByCurrentServer(transportService.defaultProtocol().getAddress());
+        // 查询本机负责的 AppGroup（经 ServerOwnershipService 的周期级快照）
+        List<Long> allAppIds = serverOwnershipService.listOwnedAppIds();
         if (CollectionUtils.isEmpty(allAppIds)) {
             log.info("[InstanceStatusChecker] current server has no app's job to check");
             return;

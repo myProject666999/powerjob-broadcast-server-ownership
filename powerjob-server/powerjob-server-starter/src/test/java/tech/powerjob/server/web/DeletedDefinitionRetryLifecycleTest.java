@@ -10,13 +10,14 @@ import tech.powerjob.server.common.module.WorkerInfo;
 import tech.powerjob.server.core.DispatchService;
 import tech.powerjob.server.core.alarm.AlarmCenter;
 import tech.powerjob.server.core.instance.*;
+import tech.powerjob.server.core.scheduler.BroadcastDispatchWarmupService;
 import tech.powerjob.server.core.scheduler.InstanceStatusCheckService;
+import tech.powerjob.server.core.scheduler.ServerOwnershipService;
 import tech.powerjob.server.core.scheduler.TimingStrategyService;
 import tech.powerjob.server.core.service.impl.job.JobServiceImpl;
 import tech.powerjob.server.core.workflow.WorkflowInstanceManager;
 import tech.powerjob.server.persistence.remote.model.*;
 import tech.powerjob.server.persistence.remote.repository.*;
-import tech.powerjob.server.remote.transporter.ProtocolInfo;
 import tech.powerjob.server.remote.transporter.TransportService;
 import tech.powerjob.server.remote.worker.WorkerClusterQueryService;
 import tech.powerjob.server.remote.worker.selector.TaskTrackerSelectorService;
@@ -36,7 +37,7 @@ class DeletedDefinitionRetryLifecycleTest {
                                                                InstanceStatus finalStatus) throws Exception {
         InstanceInfoRepository instances = mock(InstanceInfoRepository.class);
         JobInfoRepository jobs = mock(JobInfoRepository.class);
-        AppInfoRepository apps = mock(AppInfoRepository.class);
+        ServerOwnershipService ownership = mock(ServerOwnershipService.class);
         TransportService transport = mock(TransportService.class);
         InstanceMetadataService metadata = mock(InstanceMetadataService.class);
         WorkerClusterQueryService workers = mock(WorkerClusterQueryService.class);
@@ -45,7 +46,8 @@ class DeletedDefinitionRetryLifecycleTest {
                 metadata, instances, mock(WorkflowInstanceManager.class), workers));
         // Leave asynchronous log/alarm delivery outside this state-transition test.
         doNothing().when(manager).processFinishedInstance(anyLong(), any(), any(), any());
-        DispatchService dispatch = new DispatchService(transport, workers, manager, metadata, instances, selector);
+        DispatchService dispatch = new DispatchService(transport, workers, manager, metadata, instances, selector,
+                new BroadcastDispatchWarmupService(null, false, 20000, 2));
         InstanceInfoDO instance = new InstanceInfoDO(); instance.setId(20L); instance.setInstanceId(40L);
         instance.setAppId(10L); instance.setJobId(30L); instance.setStatus(InstanceStatus.RUNNING.getV());
         instance.setRunningTimes(1L); instance.setLastReportTime(1L); instance.setTaskTrackerAddress("worker-one:27777");
@@ -73,16 +75,14 @@ class DeletedDefinitionRetryLifecycleTest {
             // Model the next overdue DB scan without sleeping for the scheduler's polling interval.
             when(instances.findAllByAppIdInAndStatusAndExpectedTriggerTimeLessThan(anyList(), eq(InstanceStatus.WAITING_DISPATCH.getV()), anyLong(), any()))
                     .thenReturn(Collections.singletonList(instance), Collections.emptyList());
-            ProtocolInfo protocol = new ProtocolInfo(); protocol.setAddress("server-two:10010");
-            when(transport.defaultProtocol()).thenReturn(protocol);
-            when(apps.listAppIdByCurrentServer(protocol.getAddress())).thenReturn(Collections.singletonList(10L));
+            when(ownership.listOwnedAppIds()).thenReturn(Collections.singletonList(10L));
             WorkerInfo worker = new WorkerInfo(); worker.setAddress("worker-two:27777"); worker.setProtocol("HTTP");
             when(workers.geAvailableWorkers(job)).thenReturn(Collections.singletonList(worker));
             when(selector.select(eq(job), eq(instance), anyList())).thenReturn(worker);
             when(instances.update4TriggerSucceed(eq(40L), eq(InstanceStatus.WAITING_WORKER_RECEIVE.getV()), anyLong(), eq(worker.getAddress()), any(), eq(InstanceStatus.WAITING_DISPATCH.getV())))
                     .thenAnswer(call -> { instance.setStatus(call.getArgument(1)); instance.setTaskTrackerAddress(call.getArgument(3)); return 1; });
-            InstanceStatusCheckService checker = new InstanceStatusCheckService(transport, dispatch, manager,
-                    mock(WorkflowInstanceManager.class), apps, jobs, instances,
+            InstanceStatusCheckService checker = new InstanceStatusCheckService(dispatch, manager,
+                    mock(WorkflowInstanceManager.class), ownership, jobs, instances,
                     mock(WorkflowInfoRepository.class), mock(WorkflowInstanceInfoRepository.class));
             checker.checkWaitingDispatchInstance();
             assertEquals(InstanceStatus.WAITING_WORKER_RECEIVE.getV(), instance.getStatus());
